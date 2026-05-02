@@ -8,7 +8,7 @@ This repo is honest about what it is: artifacts from someone learning by doing, 
 
 ## How I actually work
 
-My workflow is built around an LLM-powered markdown vault — a personal knowledge base with persistent memory, automation scripts, and a wiki layer that compounds across sessions. I've written about that system in detail [here — link coming].
+My workflow is built around an LLM-powered markdown vault — a personal knowledge base with persistent memory, automation scripts, and a wiki layer that compounds across sessions. I've written about that system in detail [here](https://gist.github.com/HoneySpoons/98b8e9ae8804e21413d68da9916541b1).
 
 What that means practically: when I don't understand what the computer is doing, I ask the computer. When a script isn't working, I debug with the AI in the loop. When a concept is fuzzy — Descartes' Circle Theorem, Runge-Kutta integration, complex exponentials — I ask questions until it isn't fuzzy anymore, and then I write code that makes the thing visible.
 
