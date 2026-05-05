@@ -8,6 +8,8 @@ from scipy.integrate import solve_ivp
 plt.style.use('dark_background')
 plt.rcParams['font.family'] = 'serif'
 
+#--- knobs ---
+
 L1, L2 = 0.5, 1.0
 m1, m2 = 1.0, 0.5
 g = 9.81

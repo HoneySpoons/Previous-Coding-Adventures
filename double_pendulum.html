@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Double Pendulum</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #0e0e12;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+#canvas-area {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+canvas { display: block; }
+#gcvs { display: none; background: #090910; }
+#gcvs.on { display: block; }
+#controls {
+  background: #0e0e18;
+  border-top: 1px solid #1a1a28;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+}
+.sg { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sg label { font-size: 10px; color: #4a4a5a; letter-spacing: .07em; text-transform: uppercase; }
+.sr { display: flex; align-items: center; gap: 5px; }
+.sv { font-size: 11px; color: #666; min-width: 26px; text-align: right; }
+input[type=range] { width: 76px; accent-color: #4fc3f7; cursor: pointer; }
+.btns { margin-left: auto; display: flex; gap: 8px; }
+button {
+  background: #14142a;
+  color: #777;
+  border: 1px solid #222238;
+  padding: 5px 14px;
+  font: 12px system-ui;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background .12s, color .12s;
+}
+button:hover { background: #1c1c38; color: #aaa; }
+button.on { background: #0c1e30; color: #4fc3f7; border-color: #1e4a6a; }
+</style>
+</head>
+<body>
+
+<div id="canvas-area">
+  <canvas id="scvs"></canvas>
+  <canvas id="gcvs"></canvas>
+</div>
+
+<div id="controls">
+  <div class="sg"><label>Rod 1</label>
+    <div class="sr"><input type="range" id="sL1" min=".2" max="1.5" step=".05" value=".5">
+    <span class="sv" id="vL1">0.5</span></div></div>
+  <div class="sg"><label>Rod 2</label>
+    <div class="sr"><input type="range" id="sL2" min=".2" max="1.5" step=".05" value="1">
+    <span class="sv" id="vL2">1.0</span></div></div>
+  <div class="sg"><label>Mass 1</label>
+    <div class="sr"><input type="range" id="sm1" min=".1" max="3" step=".1" value="1">
+    <span class="sv" id="vm1">1.0</span></div></div>
+  <div class="sg"><label>Mass 2</label>
+    <div class="sr"><input type="range" id="sm2" min=".1" max="3" step=".1" value=".5">
+    <span class="sv" id="vm2">0.5</span></div></div>
+  <div class="sg"><label>Pendulums</label>
+    <div class="sr"><input type="range" id="sN" min="1" max="10" step="1" value="1">
+    <span class="sv" id="vN">1</span></div></div>
+  <div class="sg"><label>Speed</label>
+    <div class="sr"><input type="range" id="sSp" min=".1" max="2" step=".1" value=".3">
+    <span class="sv" id="vSp">0.3</span></div></div>
+  <div class="btns">
+    <button id="bRand">Random Start</button>
+    <button id="bStop">Stop</button>
+    <button id="bGraph">Graph</button>
+  </div>
+</div>
+
+<script>
+const COLORS = [
+  '#4fc3f7','#ff7043','#66bb6a','#ab47bc','#ffca28',
+  '#ef5350','#26c6da','#d4e157','#ff7bac','#80deea'
+];
+const TRACE_MAX = 700;
+const HIST_MAX  = 500;
+const BG = '#0e0e12';
+const HIT_PX = 20;
+
+let P = { L1:.5, L2:1, m1:1, m2:.5, g:9.81 };
+let N = 1;
+let base = { t1: Math.PI*.75, t2: Math.PI*.4 };
+let pends = [];
+let graphOn = false;
+let speed = 0.3;
+let physAccum = 0;
+let paused = false;
+let drag = null;  // null | { bob:1|2, t1, t2 }
+let sc = 1, ox = 0, oy = 0;
+
+const scvs = document.getElementById('scvs');
+const sCtx = scvs.getContext('2d');
+const gcvs = document.getElementById('gcvs');
+const gCtx = gcvs.getContext('2d');
+
+// ── Physics ───────────────────────────────────────────────────────────
+
+function deriv([t1,w1,t2,w2]) {
+  const { L1, L2, m1, m2, g } = P;
+  const d = t2-t1, c=Math.cos(d), s=Math.sin(d);
+  const D1 = (m1+m2)*L1 - m2*L1*c*c;
+  const D2 = (L2/L1)*D1;
+  return [
+    w1,
+    (m2*L1*w1*w1*s*c + m2*g*Math.sin(t2)*c + m2*L2*w2*w2*s - (m1+m2)*g*Math.sin(t1)) / D1,
+    w2,
+    (-m2*L2*w2*w2*s*c + (m1+m2)*g*Math.sin(t1)*c - (m1+m2)*L1*w1*w1*s - (m1+m2)*g*Math.sin(t2)) / D2
+  ];
+}
+
+function rk4(s, dt) {
+  const k1=deriv(s);
+  const k2=deriv(s.map((v,i)=>v+k1[i]*dt/2));
+  const k3=deriv(s.map((v,i)=>v+k2[i]*dt/2));
+  const k4=deriv(s.map((v,i)=>v+k3[i]*dt));
+  return s.map((v,i)=>v+(k1[i]+2*k2[i]+2*k3[i]+k4[i])*dt/6);
+}
+
+function bobPos([t1,,t2]) {
+  const x1=P.L1*Math.sin(t1), y1=-P.L1*Math.cos(t1);
+  return { x1, y1, x2: x1+P.L2*Math.sin(t2), y2: y1-P.L2*Math.cos(t2) };
+}
+
+// ── Coordinates ───────────────────────────────────────────────────────
+
+function toS(x, y) { return [ox+x*sc, oy-y*sc]; }
+function fromS(sx, sy) { return [(sx-ox)/sc, (oy-sy)/sc]; }
+
+function updateTransform() {
+  const r = P.L1+P.L2;
+  const m = 50;
+  sc = Math.min((scvs.width-m*2)/(r*2), (scvs.height-m*2)/(r*2));
+  ox = scvs.width/2;
+  oy = scvs.height/2;
+}
+
+function resizeAll() {
+  const area = document.getElementById('canvas-area');
+  const W = area.clientWidth, H = area.clientHeight;
+  if (graphOn) {
+    const gW = Math.round(W*0.38);
+    scvs.width=W-gW; scvs.height=H;
+    gcvs.width=gW;   gcvs.height=H;
+  } else {
+    scvs.width=W; scvs.height=H;
+    gcvs.width=Math.round(W*0.38); gcvs.height=H;
+  }
+  updateTransform();
+}
+
+// ── Sim control ───────────────────────────────────────────────────────
+
+function thetaOffset(i, n) { return (i-(n-1)/2)*0.002; }
+
+function restart(t1, t2) {
+  if (t1 != null) base.t1 = t1;
+  if (t2 != null) base.t2 = t2;
+  pends = Array.from({length:N}, (_,i) => ({
+    s: [base.t1, 0, base.t2+thetaOffset(i,N), 0],
+    trace: [],
+    hist: []
+  }));
+}
+
+// ── Draw sim ──────────────────────────────────────────────────────────
+
+function drawSim() {
+  const ctx=sCtx, w=scvs.width, h=scvs.height;
+  ctx.fillStyle=BG; ctx.fillRect(0,0,w,h);
+
+  const [px,py]=toS(0,0);
+  ctx.beginPath(); ctx.arc(px,py,4,0,Math.PI*2);
+  ctx.fillStyle='#3a3a4a'; ctx.fill();
+
+  // traces
+  ctx.lineWidth=0.8;
+  for (let i=0; i<pends.length; i++) {
+    const tr=pends[i].trace;
+    if (tr.length<2) continue;
+    ctx.beginPath();
+    ctx.strokeStyle=COLORS[i%10];
+    ctx.globalAlpha=0.45;
+    ctx.moveTo(...toS(tr[0].x, tr[0].y));
+    for (let j=1; j<tr.length; j++) ctx.lineTo(...toS(tr[j].x, tr[j].y));
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+
+  // rods and bobs (frozen during drag, showing last state)
+  const br = Math.max(3, 7-Math.floor(N/2));
+  for (let i=0; i<pends.length; i++) {
+    const {x1,y1,x2,y2}=bobPos(pends[i].s);
+    const col=COLORS[i%10];
+    const [s1x,s1y]=toS(x1,y1), [s2x,s2y]=toS(x2,y2);
+    ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(s1x,s1y); ctx.lineTo(s2x,s2y);
+    ctx.strokeStyle=col; ctx.globalAlpha=0.55; ctx.lineWidth=1.5; ctx.stroke(); ctx.globalAlpha=1;
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(s1x,s1y,br,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(s2x,s2y,br*1.4,0,Math.PI*2); ctx.fill();
+  }
+
+  // drag ghost
+  if (drag) {
+    const {x1,y1,x2,y2}=bobPos([drag.t1,0,drag.t2,0]);
+    const [s1x,s1y]=toS(x1,y1), [s2x,s2y]=toS(x2,y2);
+    ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(s1x,s1y); ctx.lineTo(s2x,s2y);
+    ctx.strokeStyle='#ffffff'; ctx.globalAlpha=0.75; ctx.lineWidth=2; ctx.stroke(); ctx.globalAlpha=1;
+    ctx.fillStyle='#ffffff';
+    ctx.beginPath(); ctx.arc(s1x,s1y,8,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(s2x,s2y,10,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ── Draw graph ────────────────────────────────────────────────────────
+
+function drawGraph() {
+  const ctx=gCtx, w=gcvs.width, h=gcvs.height;
+  ctx.fillStyle='#090910'; ctx.fillRect(0,0,w,h);
+
+  const mid=Math.floor(h/2);
+  drawChart(ctx, 8,      mid-16, w, 't1', 'θ₁');
+  drawChart(ctx, mid+8,  h-mid-8, w, 't2', 'θ₂');
+}
+
+function drawChart(ctx, y0, hSlot, w, key, label) {
+  const padL=8, padR=8, padT=18, padB=8;
+  const pw=w-padL-padR, ph=hSlot-padT-padB;
+  const cx=padL, cy=y0+padT;
+
+  ctx.fillStyle='#0c0c14'; ctx.fillRect(cx,cy,pw,ph);
+
+  // zero line
+  const zy=cy+ph/2;
+  ctx.setLineDash([3,6]); ctx.strokeStyle='#242434'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(cx,zy); ctx.lineTo(cx+pw,zy); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // label
+  ctx.fillStyle='#444'; ctx.font='10px system-ui';
+  ctx.fillText(label, cx+4, y0+12);
+
+  for (let i=0; i<pends.length; i++) {
+    const hist=pends[i].hist;
+    if (hist.length<2) continue;
+    ctx.beginPath(); ctx.strokeStyle=COLORS[i%10]; ctx.globalAlpha=0.7; ctx.lineWidth=1;
+    for (let j=0; j<hist.length; j++) {
+      const raw = key==='t1' ? hist[j][0] : hist[j][1];
+      const v = ((raw % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+      const norm = v > Math.PI ? v-2*Math.PI : v;   // [-π, π]
+      const sx = cx + (j/(HIST_MAX-1))*pw;
+      const sy = zy - (norm/Math.PI)*(ph/2-3);
+      j===0 ? ctx.moveTo(sx,sy) : ctx.lineTo(sx,sy);
+    }
+    ctx.stroke(); ctx.globalAlpha=1;
+  }
+}
+
+// ── Animation loop ────────────────────────────────────────────────────
+
+const DT = 0.01;
+let lastTs = null;
+
+function frame(ts) {
+  if (lastTs===null) { lastTs=ts; requestAnimationFrame(frame); return; }
+  const elapsed = Math.min((ts-lastTs)/1000, 0.05);
+  lastTs = ts;
+
+  if (!drag && !paused) {
+    physAccum += elapsed * speed;
+    const steps = Math.floor(physAccum / DT);
+    physAccum -= steps * DT;
+    for (const p of pends) {
+      for (let k=0; k<steps; k++) p.s = rk4(p.s, DT);
+      const {x2,y2}=bobPos(p.s);
+      p.trace.push({x:x2,y:y2});
+      if (p.trace.length>TRACE_MAX) p.trace.shift();
+      if (graphOn) {
+        p.hist.push([p.s[0], p.s[2]]);
+        if (p.hist.length>HIST_MAX) p.hist.shift();
+      }
+    }
+  }
+
+  drawSim();
+  if (graphOn) drawGraph();
+  requestAnimationFrame(frame);
+}
+
+// ── Drag ──────────────────────────────────────────────────────────────
+
+function nearestBob(mx, my) {
+  let best=null, bestD=HIT_PX*HIT_PX;
+  for (const p of pends) {
+    const {x1,y1,x2,y2}=bobPos(p.s);
+    const [s1x,s1y]=toS(x1,y1), [s2x,s2y]=toS(x2,y2);
+    const d1=(mx-s1x)**2+(my-s1y)**2;
+    const d2=(mx-s2x)**2+(my-s2y)**2;
+    if (d2<bestD) { bestD=d2; best={bob:2, t1:p.s[0], t2:p.s[2]}; }
+    if (d1<bestD) { bestD=d1; best={bob:1, t1:p.s[0], t2:p.s[2]}; }
+  }
+  return best;
+}
+
+scvs.addEventListener('mousedown', e => {
+  const r=scvs.getBoundingClientRect();
+  drag=nearestBob(e.clientX-r.left, e.clientY-r.top);
+});
+
+scvs.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const r=scvs.getBoundingClientRect();
+  const [wx,wy]=fromS(e.clientX-r.left, e.clientY-r.top);
+  if (drag.bob===1) {
+    drag.t1=Math.atan2(wx,-wy);
+  } else {
+    const b1x=P.L1*Math.sin(drag.t1), b1y=-P.L1*Math.cos(drag.t1);
+    drag.t2=Math.atan2(wx-b1x, -(wy-b1y));
+  }
+});
+
+function endDrag() {
+  if (!drag) return;
+  restart(drag.t1, drag.t2);
+  drag=null;
+}
+
+scvs.addEventListener('mouseup', endDrag);
+scvs.addEventListener('mouseleave', endDrag);
+
+// ── Controls ──────────────────────────────────────────────────────────
+
+function bindSlider(id, valId, key, fmt) {
+  const sl=document.getElementById(id), vEl=document.getElementById(valId);
+  sl.addEventListener('input', () => {
+    const v = fmt==='int' ? parseInt(sl.value) : parseFloat(sl.value);
+    if (key==='N') N=v; else P[key]=v;
+    vEl.textContent = fmt==='int' ? v : parseFloat(v).toFixed(1);
+    if (key==='L1'||key==='L2') updateTransform();
+    restart();
+  });
+}
+
+bindSlider('sL1','vL1','L1','f');
+bindSlider('sL2','vL2','L2','f');
+bindSlider('sm1','vm1','m1','f');
+bindSlider('sm2','vm2','m2','f');
+bindSlider('sN', 'vN', 'N', 'int');
+
+document.getElementById('sSp').addEventListener('input', function() {
+  speed = parseFloat(this.value);
+  document.getElementById('vSp').textContent = speed.toFixed(1);
+  physAccum = 0;
+});
+
+document.getElementById('bRand').addEventListener('click', () =>
+  restart(Math.random()*Math.PI*2-Math.PI, Math.random()*Math.PI*2-Math.PI)
+);
+
+document.getElementById('bStop').addEventListener('click', function() {
+  paused = !paused;
+  this.classList.toggle('on', paused);
+  if (!paused) physAccum = 0;
+});
+
+document.getElementById('bGraph').addEventListener('click', () => {
+  graphOn=!graphOn;
+  document.getElementById('bGraph').classList.toggle('on', graphOn);
+  gcvs.classList.toggle('on', graphOn);
+  resizeAll();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', resizeAll);
+resizeAll();
+restart();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
