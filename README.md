@@ -77,4 +77,4 @@ The vault system I work in is documented in a plain-language guide I'm publishin
 
 ---
 
-*Dan Andresen — Chatham, NY*
+*Dan Andresen — Rensselaer, NY*
