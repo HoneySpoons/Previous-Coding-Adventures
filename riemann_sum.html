@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Riemann Sum</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #0d1117;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+#canvas-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#top-wrap { flex: 1; min-height: 0; }
+#bot-wrap { height: 158px; flex-shrink: 0; }
+canvas { display: block; }
+
+#controls {
+  background: #0d1118;
+  border-top: 1px solid #1a1f2e;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.sg { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sg label { font-size: 10px; color: #4a5068; letter-spacing: .07em; text-transform: uppercase; }
+.sr { display: flex; align-items: center; gap: 5px; }
+.sv { font-size: 11px; color: #666; min-width: 30px; text-align: right; }
+input[type=range] { width: 80px; accent-color: #58a6ff; cursor: pointer; }
+
+.sep { width: 1px; height: 28px; background: #1a1f2e; flex-shrink: 0; }
+
+/* function tabs */
+#ftabs { display: flex; gap: 3px; }
+button.ftab {
+  background: #0d1117;
+  color: #555;
+  border: 1px solid #1e2433;
+  padding: 4px 11px;
+  font: 12px system-ui;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background .1s, color .1s, border-color .1s;
+}
+button.ftab:hover { background: #161b22; color: #8b949e; }
+button.ftab.on { background: #0c1e36; color: #58a6ff; border-color: #1f4c8a; }
+
+/* rule buttons */
+#rbuts { display: flex; gap: 3px; }
+button.rbut {
+  background: #0d1117;
+  color: #555;
+  border: 1px solid #1e2433;
+  padding: 4px 12px;
+  font: 12px system-ui;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background .1s, color .1s, border-color .1s;
+}
+button.rbut:hover { background: #161b22; color: #8b949e; }
+button.rbut.on { background: #0c1e36; color: #58a6ff; border-color: #1f4c8a; }
+
+#params { display: flex; gap: 14px; align-items: center; }
+</style>
+</head>
+<body>
+
+<div id="canvas-area">
+  <div id="top-wrap"><canvas id="tcvs"></canvas></div>
+  <div id="bot-wrap"><canvas id="bcvs"></canvas></div>
+</div>
+
+<div id="controls">
+  <div id="ftabs">
+    <button class="ftab on" data-fi="0">Power</button>
+    <button class="ftab"    data-fi="1">Beta</button>
+    <button class="ftab"    data-fi="2">Harmonic</button>
+    <button class="ftab"    data-fi="3">Gaussian</button>
+    <button class="ftab"    data-fi="4">Beat</button>
+  </div>
+  <div class="sep"></div>
+  <div id="rbuts">
+    <button class="rbut"    data-rule="left">Left</button>
+    <button class="rbut on" data-rule="midpoint">Midpoint</button>
+    <button class="rbut"    data-rule="right">Right</button>
+  </div>
+  <div class="sep"></div>
+  <div class="sg">
+    <label>n</label>
+    <div class="sr">
+      <input type="range" id="nsl" min="1" max="300" step="1" value="16" style="width:130px">
+      <span class="sv" id="nval">16</span>
+    </div>
+  </div>
+  <div class="sep" id="psep" style="display:none"></div>
+  <div id="params"></div>
+</div>
+
+<script>
+// ── Palette ────────────────────────────────────────────────────────────
+const BG      = '#0d1117';
+const FG      = '#e6edf3';
+const DIM     = '#8b949e';
+const DIMMER  = '#3a404e';
+const ACCENT  = '#58a6ff';
+const GRID    = '#1a1f2e';
+const RECT_F  = '#1f6feb';
+const RECT_E  = '#388bfd';
+const ERR_C   = '#f78166';
+const LEFT_C  = '#6e7681';
+const MID_C   = '#6e7681';
+const RIGHT_C = '#6e7681';
+
+const N_MAX    = 300;
+const TRUE_PTS = 100_000;
+const CURVE_PTS = 1000;
+
+// ── State ──────────────────────────────────────────────────────────────
+let fi   = 0;
+let n    = 16;
+let rule = 'midpoint';
+const P  = { p: 2, a: 2, b: 2, k: 1, mu: 0.5, sigma: 0.2 };
+
+let trueVal  = 0;
+let convData = { left:[], midpoint:[], right:[] };
+let dirty    = true;   // needs precompute
+
+// ── Functions ──────────────────────────────────────────────────────────
+const FUNCS = [
+  {
+    name: 'Power',
+    formula: () => `f(x) = x^${P.p % 1 === 0 ? P.p.toFixed(0) : P.p.toFixed(1)}`,
+    domain: () => [0, 1],
+    f: x => Math.pow(x, P.p),
+    params: [{ key:'p', label:'p', min:0.1, max:4, step:0.1, def:2 }],
+    piAxis: false
+  },
+  {
+    name: 'Beta',
+    formula: () => `f(x) = x^${P.a.toFixed(1)} · (1−x)^${P.b.toFixed(1)}`,
+    domain: () => [0, 1],
+    f: x => Math.pow(x, P.a) * Math.pow(1 - x, P.b),
+    params: [
+      { key:'a', label:'a', min:0.5, max:5, step:0.1, def:2 },
+      { key:'b', label:'b', min:0.5, max:5, step:0.1, def:2 }
+    ],
+    piAxis: false
+  },
+  {
+    name: 'Harmonic',
+    formula: () => `f(x) = e^(x/4) · |sin(${P.k === 1 ? '' : P.k}x)| + 0.5`,
+    domain: () => [0, 4 * Math.PI],
+    f: x => Math.exp(x / 4) * Math.abs(Math.sin(P.k * x)) + 0.5,
+    params: [{ key:'k', label:'k', min:1, max:6, step:1, def:1 }],
+    piAxis: true, piMax: 4
+  },
+  {
+    name: 'Gaussian',
+    formula: () => `f(x) = e^(−(x−${P.mu.toFixed(2)})² / 2·${P.sigma.toFixed(2)}²)`,
+    domain: () => [P.mu - 4 * P.sigma, P.mu + 4 * P.sigma],
+    f: x => Math.exp(-Math.pow(x - P.mu, 2) / (2 * P.sigma * P.sigma)),
+    params: [
+      { key:'mu',    label:'μ', min:0,    max:1,   step:0.01, def:0.5 },
+      { key:'sigma', label:'σ', min:0.05, max:0.5, step:0.01, def:0.2 }
+    ],
+    piAxis: false
+  },
+  {
+    name: 'Beat',
+    formula: () => 'f(x) = |sin(x) · sin(2x) · sin(3x)|',
+    domain: () => [0, 2 * Math.PI],
+    f: x => Math.abs(Math.sin(x) * Math.sin(2 * x) * Math.sin(3 * x)),
+    params: [],
+    piAxis: true, piMax: 2
+  }
+];
+
+function fn()  { return FUNCS[fi]; }
+function dom() { return fn().domain(); }
+function fval(x) { return fn().f(x); }
+
+// ── Math ───────────────────────────────────────────────────────────────
+
+function trapezoid(f, a, b, pts) {
+  const h = (b - a) / (pts - 1);
+  let sum = 0;
+  for (let i = 0; i < pts; i++) {
+    const v = f(a + i * h);
+    sum += (i === 0 || i === pts - 1) ? v * 0.5 : v;
+  }
+  return sum * h;
+}
+
+function riemannSum(nv, rl, a, b, f) {
+  const h = (b - a) / nv;
+  let sum = 0;
+  for (let i = 0; i < nv; i++) {
+    const x = rl === 'left'  ? a + i * h
+            : rl === 'right' ? a + (i + 1) * h
+                              : a + (i + 0.5) * h;
+    sum += f(x);
+  }
+  return sum * h;
+}
+
+function precompute() {
+  const [a, b] = dom();
+  const f = fn().f;
+  trueVal = trapezoid(f, a, b, TRUE_PTS);
+  for (const rl of ['left', 'midpoint', 'right']) {
+    convData[rl] = [];
+    for (let i = 1; i <= N_MAX; i++) {
+      const err = Math.abs(riemannSum(i, rl, a, b, f) - trueVal);
+      convData[rl].push(err < 1e-12 ? 1e-12 : err);
+    }
+  }
+  dirty = false;
+}
+
+// ── Canvas refs ────────────────────────────────────────────────────────
+
+const twrap = document.getElementById('top-wrap');
+const bwrap = document.getElementById('bot-wrap');
+const tcvs  = document.getElementById('tcvs');
+const bcvs  = document.getElementById('bcvs');
+const tCtx  = tcvs.getContext('2d');
+const bCtx  = bcvs.getContext('2d');
+
+function resizeCanvases() {
+  tcvs.width  = twrap.clientWidth;
+  tcvs.height = twrap.clientHeight;
+  bcvs.width  = bwrap.clientWidth;
+  bcvs.height = bwrap.clientHeight;
+}
+
+// ── Draw: top panel ────────────────────────────────────────────────────
+
+function drawTop() {
+  const c = tCtx, w = tcvs.width, h = tcvs.height;
+  c.fillStyle = BG;
+  c.fillRect(0, 0, w, h);
+
+  const PAD = { L: 56, R: 18, T: 62, B: 36 };
+  const pw = w - PAD.L - PAD.R;
+  const ph = h - PAD.T - PAD.B;
+
+  // Build curve
+  const [a, b] = dom();
+  const xs = [], ys = [];
+  for (let i = 0; i <= CURVE_PTS; i++) {
+    const x = a + (b - a) * i / CURVE_PTS;
+    xs.push(x); ys.push(fval(x));
+  }
+  const yRaw = Math.max(...ys);
+  const yMax = yRaw * 1.12;
+
+  const tx = x => PAD.L + (x - a) / (b - a) * pw;
+  const ty = y => PAD.T + ph - (y / yMax) * ph;
+
+  // Grid lines (y)
+  const ySteps = 4;
+  c.lineWidth = 1;
+  for (let i = 0; i <= ySteps; i++) {
+    const yv = yMax * i / ySteps;
+    const yp = ty(yv);
+    c.strokeStyle = GRID;
+    c.beginPath(); c.moveTo(PAD.L, yp); c.lineTo(PAD.L + pw, yp); c.stroke();
+    c.fillStyle = DIMMER; c.font = '10px monospace'; c.textAlign = 'right';
+    c.fillText(yv.toFixed(yv < 0.1 ? 3 : 2), PAD.L - 6, yp + 3);
+  }
+
+  // X-axis ticks
+  c.textAlign = 'center'; c.fillStyle = DIMMER; c.font = '10px monospace';
+  if (fn().piAxis) {
+    const pm = fn().piMax;
+    const steps = pm * 2; // every π/2
+    for (let i = 0; i <= steps; i++) {
+      const xv = a + (b - a) * i / steps;
+      const xp = tx(xv);
+      const halves = i;
+      const label = halves === 0 ? '0'
+                  : halves % 2 === 0 ? (halves/2 === 1 ? 'π' : `${halves/2}π`)
+                  : (halves === 1 ? 'π/2' : `${halves}π/2`);
+      c.fillStyle = DIMMER;
+      c.fillText(label, xp, PAD.T + ph + 18);
+      c.strokeStyle = GRID; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(xp, PAD.T + ph); c.lineTo(xp, PAD.T + ph + 4); c.stroke();
+    }
+  } else {
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) {
+      const xv = a + (b - a) * i / steps;
+      const xp = tx(xv);
+      c.fillStyle = DIMMER;
+      c.fillText(xv.toPrecision(3).replace(/\.?0+$/, ''), xp, PAD.T + ph + 18);
+      c.strokeStyle = GRID; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(xp, PAD.T + ph); c.lineTo(xp, PAD.T + ph + 4); c.stroke();
+    }
+  }
+
+  // Axis lines
+  c.strokeStyle = DIMMER; c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(PAD.L, PAD.T); c.lineTo(PAD.L, PAD.T + ph);
+  c.lineTo(PAD.L + pw, PAD.T + ph);
+  c.stroke();
+
+  // Rectangles
+  const hRect = (b - a) / n;
+  c.lineWidth = n > 80 ? 0.3 : 0.6;
+  for (let i = 0; i < n; i++) {
+    const xEval = rule === 'left'  ? a + i * hRect
+                : rule === 'right' ? a + (i + 1) * hRect
+                                   : a + (i + 0.5) * hRect;
+    const xLeft = a + i * hRect;
+    const fv = fval(xEval);
+    const rx = tx(xLeft);
+    const rw = Math.max(1, tx(xLeft + hRect) - rx - (n > 100 ? 0 : 0.5));
+    const ry = ty(fv);
+    const rh = ty(0) - ry;
+    c.fillStyle = RECT_F; c.globalAlpha = 0.52; c.fillRect(rx, ry, rw, rh);
+    c.globalAlpha = 1; c.strokeStyle = RECT_E; c.strokeRect(rx, ry, rw, rh);
+  }
+
+  // Curve fill
+  c.beginPath();
+  c.moveTo(tx(xs[0]), ty(0));
+  for (let i = 0; i < xs.length; i++) c.lineTo(tx(xs[i]), ty(ys[i]));
+  c.lineTo(tx(xs[xs.length - 1]), ty(0));
+  c.closePath();
+  c.fillStyle = ACCENT; c.globalAlpha = 0.08; c.fill(); c.globalAlpha = 1;
+
+  // Curve line
+  c.beginPath();
+  c.moveTo(tx(xs[0]), ty(ys[0]));
+  for (let i = 1; i < xs.length; i++) c.lineTo(tx(xs[i]), ty(ys[i]));
+  c.strokeStyle = FG; c.lineWidth = 2; c.stroke();
+
+  // ── Title + formula ────────────────────────────────────────────────
+  c.textAlign = 'center';
+  c.fillStyle = FG; c.font = '600 15px system-ui';
+  c.fillText('Riemann Sum', w / 2, 20);
+  c.fillStyle = ACCENT; c.font = '13px monospace';
+  c.fillText(fn().formula(), w / 2, 38);
+
+  // ── Live stats ─────────────────────────────────────────────────────
+  const approx = riemannSum(n, rule, a, b, fn().f);
+  const err    = Math.abs(approx - trueVal);
+  const pct    = trueVal !== 0 ? (err / Math.abs(trueVal) * 100) : 0;
+
+  const stats = [
+    `n = ${n}`,
+    rule,
+    `approx = ${approx.toFixed(5)}`,
+    `true = ${trueVal.toFixed(5)}`,
+    `err = ${err.toExponential(2)}`,
+    `${pct.toFixed(2)}%`
+  ];
+
+  c.font = '11px monospace'; c.textAlign = 'left';
+  let sx = PAD.L + 4;
+  for (const s of stats) {
+    c.fillStyle = s === rule ? ACCENT : DIM;
+    c.fillText(s, sx, PAD.T - 10);
+    sx += c.measureText(s).width + 18;
+  }
+}
+
+// ── Draw: bottom panel ─────────────────────────────────────────────────
+
+function drawBot() {
+  const c = bCtx, w = bcvs.width, h = bcvs.height;
+  c.fillStyle = '#090c12';
+  c.fillRect(0, 0, w, h);
+
+  const PAD = { L: 54, R: 18, T: 16, B: 28 };
+  const pw = w - PAD.L - PAD.R;
+  const ph = h - PAD.T - PAD.B;
+
+  // y range in log10 space
+  const allVals = [...convData.left, ...convData.midpoint, ...convData.right];
+  const logMin  = Math.floor(Math.log10(Math.min(...allVals)));
+  const logMax  = Math.ceil(Math.log10(Math.max(...allVals)));
+
+  const tx = nv => PAD.L + (nv - 1) / (N_MAX - 1) * pw;
+  const ty = v => {
+    const lv = Math.log10(Math.max(v, 1e-14));
+    return PAD.T + ph - (lv - logMin) / (logMax - logMin) * ph;
+  };
+
+  // Y grid lines (powers of 10)
+  c.font = '10px monospace'; c.textAlign = 'right';
+  for (let exp = logMin; exp <= logMax; exp++) {
+    const yp = ty(Math.pow(10, exp));
+    c.strokeStyle = GRID; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(PAD.L, yp); c.lineTo(PAD.L + pw, yp); c.stroke();
+    c.fillStyle = DIMMER;
+    c.fillText(`10^${exp}`, PAD.L - 5, yp + 3);
+  }
+
+  // X ticks
+  c.textAlign = 'center'; c.fillStyle = DIMMER; c.font = '10px monospace';
+  for (const nv of [1, 50, 100, 150, 200, 250, 300]) {
+    const xp = tx(nv);
+    c.fillText(nv, xp, PAD.T + ph + 18);
+    c.strokeStyle = GRID; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(xp, PAD.T + ph); c.lineTo(xp, PAD.T + ph + 3); c.stroke();
+  }
+
+  // Axis lines
+  c.strokeStyle = DIMMER; c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(PAD.L, PAD.T); c.lineTo(PAD.L, PAD.T + ph);
+  c.lineTo(PAD.L + pw, PAD.T + ph);
+  c.stroke();
+
+  // Convergence curves — inactive rules first, then active on top
+  const ruleOrder = ['left', 'midpoint', 'right'].filter(r => r !== rule);
+  ruleOrder.push(rule);
+
+  for (const rl of ruleOrder) {
+    const isActive = rl === rule;
+    c.strokeStyle = isActive ? ACCENT : LEFT_C;
+    c.globalAlpha = isActive ? 1 : 0.28;
+    c.lineWidth   = isActive ? 1.8 : 1;
+    c.beginPath();
+    for (let i = 0; i < N_MAX; i++) {
+      const xp = tx(i + 1);
+      const yp = ty(convData[rl][i]);
+      i === 0 ? c.moveTo(xp, yp) : c.lineTo(xp, yp);
+    }
+    c.stroke();
+    c.globalAlpha = 1;
+  }
+
+  // Current-n marker
+  const curErr = convData[rule][n - 1];
+  const mxp = tx(n);
+  const myp = ty(curErr);
+  c.strokeStyle = ERR_C; c.lineWidth = 1; c.globalAlpha = 0.6; c.setLineDash([3, 4]);
+  c.beginPath(); c.moveTo(mxp, PAD.T); c.lineTo(mxp, PAD.T + ph); c.stroke();
+  c.setLineDash([]); c.globalAlpha = 1;
+  c.fillStyle = ERR_C;
+  c.beginPath(); c.arc(mxp, myp, 4.5, 0, Math.PI * 2); c.fill();
+
+  // Label
+  c.fillStyle = DIM; c.font = '10px monospace'; c.textAlign = 'left';
+  c.fillText('convergence', PAD.L + 4, PAD.T + 12);
+}
+
+// ── Draw (both) ────────────────────────────────────────────────────────
+
+function draw() {
+  if (dirty) precompute();
+  drawTop();
+  drawBot();
+}
+
+// ── Params panel ───────────────────────────────────────────────────────
+
+function buildParams() {
+  const container = document.getElementById('params');
+  const sep       = document.getElementById('psep');
+  container.innerHTML = '';
+  const pd = fn().params;
+  sep.style.display = pd.length ? '' : 'none';
+  for (const p of pd) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sg';
+    const lbl = document.createElement('label');
+    lbl.textContent = p.label;
+    const row = document.createElement('div');
+    row.className = 'sr';
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = p.min; sl.max = p.max; sl.step = p.step; sl.value = P[p.key];
+    const vspan = document.createElement('span');
+    vspan.className = 'sv';
+    vspan.textContent = parseFloat(P[p.key]).toFixed(p.step < 0.1 ? 2 : p.step < 1 ? 1 : 0);
+    sl.addEventListener('input', () => {
+      P[p.key] = parseFloat(sl.value);
+      vspan.textContent = P[p.key].toFixed(p.step < 0.1 ? 2 : p.step < 1 ? 1 : 0);
+      dirty = true;
+      draw();
+    });
+    row.append(sl, vspan);
+    wrap.append(lbl, row);
+    container.append(wrap);
+  }
+}
+
+// ── Controls wiring ────────────────────────────────────────────────────
+
+document.getElementById('ftabs').addEventListener('click', e => {
+  const btn = e.target.closest('.ftab');
+  if (!btn) return;
+  document.querySelectorAll('.ftab').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  fi = parseInt(btn.dataset.fi);
+  n = 16;
+  document.getElementById('nsl').value = 16;
+  document.getElementById('nval').textContent = 16;
+  dirty = true;
+  buildParams();
+  draw();
+});
+
+document.getElementById('rbuts').addEventListener('click', e => {
+  const btn = e.target.closest('.rbut');
+  if (!btn) return;
+  document.querySelectorAll('.rbut').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  rule = btn.dataset.rule;
+  draw();
+});
+
+document.getElementById('nsl').addEventListener('input', function() {
+  n = parseInt(this.value);
+  document.getElementById('nval').textContent = n;
+  draw();
+});
+
+// ── Init ───────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => { resizeCanvases(); draw(); });
+resizeCanvases();
+buildParams();
+draw();
+</script>
+</body>
+</html>
