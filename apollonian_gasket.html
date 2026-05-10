@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apollonian Gasket</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #0e0e12;
+  color: #c8c8d0;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+#canvas-area {
+  position: relative;
+  flex: 1;
+  display: block;
+  overflow: hidden;
+  min-height: 0;
+}
+canvas#cvs { display: block; cursor: grab; }
+canvas#cvs.grabbing { cursor: grabbing; }
+
+/* Drawer toggle tab — visible when drawer is closed */
+#drawerTab {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  background: #14142a;
+  color: #888;
+  border: 1px solid #222238;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  padding: 14px 8px;
+  cursor: pointer;
+  font: 11px system-ui;
+  letter-spacing: .25em;
+  writing-mode: vertical-rl;
+  transform: translateY(-50%);
+  transition: opacity .25s, color .12s, background .12s;
+  z-index: 5;
+  user-select: none;
+}
+#drawerTab:hover { color: #4fc3f7; background: #1c1c38; }
+body.drawer-open #drawerTab { opacity: 0; pointer-events: none; }
+
+/* Drawer */
+#drawer {
+  position: absolute;
+  top: 0; right: 0;
+  width: min(360px, 100vw);
+  height: 100%;
+  background: #0e0e18;
+  border-left: 1px solid #1a1a28;
+  transform: translateX(100%);
+  transition: transform .28s cubic-bezier(.4, 0, .2, 1);
+  display: flex;
+  flex-direction: column;
+  z-index: 6;
+  font-size: 12px;
+  color: #b8b8c2;
+}
+body.drawer-open #drawer { transform: translateX(0); }
+#drawerHeader {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1a1a28;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+#drawerHeader h2 {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: .18em; color: #4fc3f7;
+  text-transform: uppercase;
+}
+#drawerClose {
+  background: none; border: none; color: #777;
+  cursor: pointer; font-size: 20px; padding: 0 6px;
+  line-height: 1;
+}
+#drawerClose:hover { color: #4fc3f7; }
+#drawerBody {
+  overflow-y: auto;
+  overflow-x: visible;
+  padding: 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+#drawerBody section h3 {
+  font-size: 9px; font-weight: 600; letter-spacing: .18em;
+  color: #4a4a5a; text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.eq, .kvec, .swapEq {
+  font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+  font-size: 13px; line-height: 1.6; color: #d8d8e0;
+}
+.eq .col-l { color: #4fc3f7; }
+.eq .col-r { color: #ff7043; }
+.eq .equals { color: #777; padding: 0 8px; }
+.eq .form { color: #888; font-size: 12px; }
+.kvec .k1 { color: #4fc3f7; }
+.kvec .k2 { color: #66bb6a; }
+.kvec .k3 { color: #ab47bc; }
+.kvec .k4 { color: #ff7043; }
+.kvec .label { color: #555; font-size: 10px; letter-spacing: .08em; padding-right: 6px; }
+.note {
+  font-size: 11px; color: #6a6a7a; margin-top: 8px; line-height: 1.55;
+}
+
+/* Term tooltip */
+.term {
+  font-style: italic; color: #4fc3f7; cursor: help;
+  border-bottom: 1px dotted rgba(79, 195, 247, .6);
+  position: relative;
+  white-space: nowrap;
+}
+.tip {
+  display: none;
+  position: fixed;
+  background: #16162a;
+  border: 1px solid #2a2a3e;
+  color: #c8c8d0;
+  padding: 8px 11px;
+  border-radius: 4px;
+  white-space: normal;
+  width: 240px;
+  font-size: 11px;
+  font-style: normal;
+  text-align: left;
+  line-height: 1.5;
+  z-index: 100;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
+/* Integer mode list */
+#intStatus { font-size: 11px; color: #6a6a7a; line-height: 1.5; }
+#intStatus.active { color: #4fc3f7; }
+#intList {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-top: 8px;
+  font-family: 'Cambria Math', Georgia, serif;
+}
+#intList .pill {
+  background: #14142a; color: #4fc3f7;
+  border: 1px solid #1e4a6a;
+  padding: 2px 9px; border-radius: 999px;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+#intList .pill:hover { background: #1c2c44; }
+#intList .pill.active {
+  background: #4fc3f7; color: #0e0e12; border-color: #4fc3f7;
+  font-weight: 600;
+}
+
+/* Selected circle reveal */
+#selInfo .swapEq + .swapEq { margin-top: 2px; }
+.swapEq .num { color: #4fc3f7; font-weight: 600; }
+.swapEq .neg { color: #ff7043; font-weight: 600; }
+.swapEq .meta { color: #666; font-size: 11px; }
+#selInfo .empty { color: #555; font-size: 11px; line-height: 1.55; font-style: italic; }
+
+/* Preset seed buttons */
+#presets {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.preset-group {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+}
+.group-label {
+  font-size: 9px; color: #4a4a5a;
+  letter-spacing: .14em; text-transform: uppercase;
+  width: 60px; flex-shrink: 0;
+}
+button.preset {
+  background: #14142a; color: #888;
+  border: 1px solid #222238;
+  padding: 4px 9px;
+  font: 11px 'Cambria Math', Georgia, serif;
+  cursor: pointer; border-radius: 3px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+button.preset:hover { background: #1c1c38; color: #4fc3f7; }
+
+/* Controls bar (bottom) */
+#controls {
+  background: #0e0e18;
+  border-top: 1px solid #1a1a28;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.sg { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sg label {
+  font-size: 10px; color: #4a4a5a;
+  letter-spacing: .07em; text-transform: uppercase;
+}
+.sr { display: flex; align-items: center; gap: 5px; }
+.sr input[type=range] {
+  width: 78px;
+  accent-color: #4fc3f7;
+  cursor: pointer;
+}
+.sv {
+  font-size: 11px; color: #888;
+  width: 30px; text-align: right;
+  font-family: 'Cambria Math', Georgia, serif;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.sv:hover { border-color: #2a2a3e; color: #aab; }
+.sv:focus { border-color: #4fc3f7; outline: none; color: #4fc3f7; }
+.sep { width: 1px; height: 28px; background: #1a1a28; flex-shrink: 0; }
+.btns { display: flex; gap: 8px; margin-left: auto; }
+button.action {
+  background: #14142a; color: #888;
+  border: 1px solid #222238;
+  padding: 5px 14px; font: 12px system-ui;
+  cursor: pointer; border-radius: 3px;
+  transition: background .12s, color .12s;
+}
+button.action:hover { background: #1c1c38; color: #aaa; }
+
+/* Live circle count */
+#circleCount {
+  position: absolute;
+  top: 12px; left: 16px;
+  font: 11px 'Cambria Math', Georgia, serif;
+  color: rgba(200, 200, 208, .35);
+  pointer-events: none;
+  letter-spacing: .04em;
+  z-index: 4;
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-area">
+  <canvas id="cvs"></canvas>
+  <div id="circleCount"></div>
+  <div id="drawerTab" title="Show math">M A T H</div>
+  <aside id="drawer">
+    <div id="drawerHeader">
+      <h2>The Math</h2>
+      <button id="drawerClose" aria-label="Close">×</button>
+    </div>
+    <div id="drawerBody">
+
+      <section>
+        <h3>Descartes' Circle Theorem</h3>
+        <div class="eq">
+          <div class="form">(k₁ + k₂ + k₃ + k₄)² = 2 (k₁² + k₂² + k₃² + k₄²)</div>
+          <div style="margin-top:8px;">
+            <span class="col-l" id="lhs">—</span>
+            <span class="equals">=</span>
+            <span class="col-r" id="rhs">—</span>
+          </div>
+        </div>
+        <p class="note">
+          Four <span class="term">mutually tangent<span class="tip">Every pair touches each other at exactly one point.</span></span> circles always satisfy this equation, where <span class="term">k<span class="tip"><b>Curvature</b> — one over the radius. The outer wrapping circle gets a negative k because it bends opposite to the inside circles.</span></span> = 1 / radius.
+        </p>
+      </section>
+
+      <section>
+        <h3>4-vector</h3>
+        <div class="kvec" id="kvec">—</div>
+        <p class="note">k₄ is the outer wrapping circle (negative). Move the sliders — the LHS and RHS above always stay equal, that's the theorem at work.</p>
+      </section>
+
+      <section>
+        <h3>Soddy swap reveal</h3>
+        <div id="selInfo">
+          <div class="empty">Click any circle on the canvas to see how its curvature is computed from its parent triple.</div>
+        </div>
+        <p class="note">
+          A <span class="term">Soddy swap<span class="tip">Three mutually-tangent circles have exactly two circles tangent to all three — one in the gap, one wrapping around. Replacing one of four mutually-tangent circles with the other valid fourth is a Soddy swap.</span></span> swaps one of four mutually-tangent circles for its alternate. <span class="term">Vieta's formula<span class="tip">The algebraic relation between a quadratic's coefficients and its roots. Here it makes the swap a single subtraction: k_new = 2(k_a + k_b + k_c) − k_old.</span></span> turns it into a single subtraction — that's the engine driving the recursion.
+        </p>
+      </section>
+
+      <section>
+        <h3>Integer curvatures</h3>
+        <div id="intStatus">Set k₁, k₂, k₃ to integers to look for an integer gasket.</div>
+        <div id="intList"></div>
+      </section>
+
+      <section>
+        <h3>Seeds</h3>
+        <div id="presets">
+          <div class="preset-group">
+            <span class="group-label" title="Every spawned curvature is an integer">integer</span>
+            <button class="preset" data-k="2,2,3" title="outer = −1">(2, 2, 3)</button>
+            <button class="preset" data-k="3,6,7" title="outer = −2">(3, 6, 7)</button>
+            <button class="preset" data-k="5,8,8" title="outer = −3">(5, 8, 8)</button>
+          </div>
+          <div class="preset-group">
+            <span class="group-label" title="Consecutive Fibonacci numbers">fibonacci</span>
+            <button class="preset" data-k="1,2,3">(1, 2, 3)</button>
+            <button class="preset" data-k="2,3,5">(2, 3, 5)</button>
+            <button class="preset" data-k="3,5,8">(3, 5, 8)</button>
+          </div>
+          <div class="preset-group">
+            <span class="group-label">other</span>
+            <button class="preset" data-k="3,3,3" title="Three-fold symmetry">(3, 3, 3)</button>
+            <button class="preset" data-k="1,2,4" title="Powers of two">(1, 2, 4)</button>
+          </div>
+        </div>
+        <p class="note">Integer-row seeds produce gaskets where every curvature is a whole number. Click any to load.</p>
+      </section>
+
+    </div>
+  </aside>
+</div>
+
+<div id="controls">
+  <div class="sg">
+    <label>k₁</label>
+    <div class="sr">
+      <input type="range" id="sk1" min="0.5" max="10" step="0.1" value="3.0">
+      <input type="text" class="sv" id="vk1" value="3.0">
+    </div>
+  </div>
+  <div class="sg">
+    <label>k₂</label>
+    <div class="sr">
+      <input type="range" id="sk2" min="0.5" max="10" step="0.1" value="3.0">
+      <input type="text" class="sv" id="vk2" value="3.0">
+    </div>
+  </div>
+  <div class="sg">
+    <label>k₃</label>
+    <div class="sr">
+      <input type="range" id="sk3" min="0.5" max="10" step="0.1" value="3.0">
+      <input type="text" class="sv" id="vk3" value="3.0">
+    </div>
+  </div>
+  <div class="sep"></div>
+  <div class="sg">
+    <label>depth</label>
+    <div class="sr">
+      <input type="range" id="sdepth" min="1" max="18" step="1" value="14">
+      <input type="text" class="sv" id="vdepth" value="14">
+    </div>
+  </div>
+  <div class="sg">
+    <label>speed</label>
+    <div class="sr">
+      <input type="range" id="sspeed" min="1" max="40" step="1" value="6">
+      <input type="text" class="sv" id="vspeed" value="6">
+    </div>
+  </div>
+  <div class="btns">
+    <button class="action" id="bRebuild">Rebuild</button>
+    <button class="action" id="bReset">Reset</button>
+    <button class="action" id="bFit">Fit view</button>
+  </div>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────
+const BG = '#0e0e12';
+const SEL_COLOR = '#ff7043';
+const PARENT_COLOR = '#ffca28';
+const SWAP_COLOR = '#ab47bc';
+
+const K_MIN = 0.5, K_MAX = 10.0;
+const DEPTH_MAX = 18, SPEED_MAX = 40;
+const MIN_RADIUS = 0.0005;
+const FADE_FRAMES = 8;
+const GAP_FRAMES_BETWEEN_GENS = 4;
+const FRAME_INTERVAL_MS = 25;
+const LINE_WIDTH = 0.9;
+const INT_TOL = 1e-6;
+const INT_LIMIT = 100000;
+
+// Spectrum drawn from the pendulum palette: cyan → periwinkle → purple → pink → amber
+const STOPS = [
+  [0.00, [ 79, 195, 247]],   // #4fc3f7 — pendulum cyan
+  [0.30, [122, 142, 240]],   // muted periwinkle
+  [0.55, [171,  71, 188]],   // #ab47bc — pendulum purple
+  [0.80, [255, 123, 172]],   // #ff7bac — pendulum pink
+  [1.00, [255, 202,  40]],   // #ffca28 — pendulum amber
+];
+function colormap(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < STOPS.length - 1; i++) {
+    const [t0, c0] = STOPS[i];
+    const [t1, c1] = STOPS[i + 1];
+    if (t <= t1) {
+      const f = (t - t0) / (t1 - t0);
+      return [
+        Math.round(c0[0] + (c1[0] - c0[0]) * f),
+        Math.round(c0[1] + (c1[1] - c0[1]) * f),
+        Math.round(c0[2] + (c1[2] - c0[2]) * f),
+      ];
+    }
+  }
+  return STOPS[STOPS.length - 1][1];
+}
+
+// ── Complex helpers (z = [re, im]) ────────────────────────────────────
+const cAdd  = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const cSub  = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const cMul  = (a, b) => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+const cMulR = (a, r) => [a[0] * r, a[1] * r];
+const cDivR = (a, r) => [a[0] / r, a[1] / r];
+
+// ── Math: gasket builder ──────────────────────────────────────────────
+
+function fourthCircle(k1, k2, k3, z1, z2, z3, kPrev, zPrev) {
+  const sumK  = k1 + k2 + k3;
+  const sumKZ = cAdd(cAdd(cMulR(z1, k1), cMulR(z2, k2)), cMulR(z3, k3));
+  const kNew  = 2 * sumK - kPrev;
+  if (kNew === 0) return { k: 0, z: [0, 0] };
+  const zNew = cDivR(cSub(cMulR(sumKZ, 2), cMulR(zPrev, kPrev)), kNew);
+  return { k: kNew, z: zNew };
+}
+
+function initialConfiguration(k1, k2, k3) {
+  const r1 = 1 / k1, r2 = 1 / k2, r3 = 1 / k3;
+  const z1 = [0, 0];
+  const z2 = [r1 + r2, 0];
+  const d12 = r1 + r2, d13 = r1 + r3, d23 = r2 + r3;
+  let cosA = (d12 * d12 + d13 * d13 - d23 * d23) / (2 * d12 * d13);
+  cosA = Math.max(-1, Math.min(1, cosA));
+  const alpha = Math.acos(cosA);
+  const z3 = [z1[0] + d13 * Math.cos(alpha), z1[1] + d13 * Math.sin(alpha)];
+
+  const sumK = k1 + k2 + k3;
+  const disc = Math.max(k1 * k2 + k2 * k3 + k3 * k1, 0);
+  const sqrtK = Math.sqrt(disc);
+  const kPlus  = sumK + 2 * sqrtK;
+  const kMinus = sumK - 2 * sqrtK;
+  const kOut = kMinus < 0 ? kMinus : kPlus;
+
+  const sumKZ = cAdd(cAdd(cMulR(z1, k1), cMulR(z2, k2)), cMulR(z3, k3));
+  const dz = cAdd(cAdd(
+    cMulR(cMul(z1, z2), k1 * k2),
+    cMulR(cMul(z2, z3), k2 * k3)),
+    cMulR(cMul(z3, z1), k3 * k1)
+  );
+  // complex sqrt
+  const m = Math.hypot(dz[0], dz[1]);
+  const sqrtRe = Math.sqrt(Math.max((m + dz[0]) / 2, 0));
+  const sqrtIm = Math.sign(dz[1] || 1) * Math.sqrt(Math.max((m - dz[0]) / 2, 0));
+  const sqrtZ = [sqrtRe, sqrtIm];
+
+  const zPlus  = kPlus  !== 0 ? cDivR(cAdd(sumKZ, cMulR(sqrtZ, 2)), kPlus)  : [0, 0];
+  const zMinus = kMinus !== 0 ? cDivR(cSub(sumKZ, cMulR(sqrtZ, 2)), kMinus) : [0, 0];
+  const zOut = kOut === kMinus ? zMinus : zPlus;
+
+  const shift = zOut;
+  return [
+    { k: kOut, z: cSub(zOut, shift), depth: 0, parent: null },
+    { k: k1,   z: cSub(z1,   shift), depth: 0, parent: null },
+    { k: k2,   z: cSub(z2,   shift), depth: 0, parent: null },
+    { k: k3,   z: cSub(z3,   shift), depth: 0, parent: null },
+  ];
+}
+
+function recurse(c1, c2, c3, cPrev, depth, out, maxDepth, idx) {
+  if (depth > maxDepth) return;
+  const { k: kNew, z: zNew } = fourthCircle(
+    c1.k, c2.k, c3.k, c1.z, c2.z, c3.z, cPrev.k, cPrev.z
+  );
+  if (kNew <= 0) return;
+  if (1 / kNew < MIN_RADIUS) return;
+  const c = {
+    k: kNew, z: zNew, depth,
+    parent: { triple: [idx[0], idx[1], idx[2]], swap: idx[3] }
+  };
+  out.push(c);
+  const i = out.length - 1;
+  recurse(c1, c2, c, c3, depth + 1, out, maxDepth, [idx[0], idx[1], i, idx[2]]);
+  recurse(c1, c3, c, c2, depth + 1, out, maxDepth, [idx[0], idx[2], i, idx[1]]);
+  recurse(c2, c3, c, c1, depth + 1, out, maxDepth, [idx[1], idx[2], i, idx[0]]);
+}
+
+function buildGasket(initial, maxDepth) {
+  const circles = [...initial];
+  const [cOut, c1, c2, c3] = initial;
+  recurse(c1,   c2, c3, cOut, 1, circles, maxDepth, [1, 2, 3, 0]);
+  recurse(cOut, c1, c2, c3,   1, circles, maxDepth, [0, 1, 2, 3]);
+  recurse(cOut, c1, c3, c2,   1, circles, maxDepth, [0, 1, 3, 2]);
+  recurse(cOut, c2, c3, c1,   1, circles, maxDepth, [0, 2, 3, 1]);
+  return circles;
+}
+
+function planReveal(circles, circlesPerFrame) {
+  const byDepth = new Map();
+  for (let i = 0; i < circles.length; i++) {
+    const d = circles[i].depth;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(i);
+  }
+  const plan = [];
+  let frame = 0;
+  const depths = [...byDepth.keys()].sort((a, b) => a - b);
+  for (const d of depths) {
+    const idxs = byDepth.get(d).sort(
+      (a, b) => Math.abs(1 / circles[b].k) - Math.abs(1 / circles[a].k)
+    );
+    const genStart = frame;
+    for (let i = 0; i < idxs.length; i++) {
+      plan.push({
+        idx: idxs[i],
+        frame: genStart + Math.floor(i / Math.max(circlesPerFrame, 1))
+      });
+    }
+    frame = (plan[plan.length - 1]?.frame ?? frame) + GAP_FRAMES_BETWEEN_GENS;
+  }
+  return plan;
+}
+
+// ── State ─────────────────────────────────────────────────────────────
+let circles    = [];
+let revealPlan = [];
+let frame      = 0;
+let maxFrame   = 1;
+let xMin = -1.2, xMax = 1.2, yMin = -1.2, yMax = 1.2;
+let R          = 1.0;
+let maxGen     = 0;
+let intMode    = { active: false, integers: [] };
+let selected   = null;
+let multiSelected = null;  // { value: k, indices: [...] } — set when an integer pill is active
+let drawerOpen = false;
+let viewShifted = false;
+let panAnim    = null;
+
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+
+// ── Coordinate transform ──────────────────────────────────────────────
+function toS(x, y) {
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  return [
+    (x - xMin) / (xMax - xMin) * w,
+    h - (y - yMin) / (yMax - yMin) * h
+  ];
+}
+function fromS(sx, sy) {
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  return [
+    xMin + sx / w * (xMax - xMin),
+    yMin + (h - sy) / h * (yMax - yMin)
+  ];
+}
+function pxPerUnit() {
+  return cvs.clientWidth / (xMax - xMin);
+}
+
+function fitView() {
+  const pad = R * 1.05;
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  const drawerW = drawerOpen ? Math.min(360, w) : 0;
+  const visibleW = Math.max(w - drawerW, 1);
+  // px-per-unit chosen so the gasket fits inside the visible (non-drawer) area
+  const ppu = Math.min(visibleW / (2 * pad), h / (2 * pad));
+  // Center gasket origin at pixel ((w - drawerW)/2, h/2)
+  xMin = -visibleW / (2 * ppu);
+  xMax = xMin + w / ppu;
+  yMin = -h / (2 * ppu);
+  yMax = yMin + h / ppu;
+  draw();
+}
+
+// ── Resize ────────────────────────────────────────────────────────────
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const area = document.getElementById('canvas-area');
+  const w = area.clientWidth, h = area.clientHeight;
+  cvs.style.width  = w + 'px';
+  cvs.style.height = h + 'px';
+  cvs.width  = Math.round(w * dpr);
+  cvs.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fitView();
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────
+function draw() {
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, w, h);
+
+  const sc = pxPerUnit();
+  const sel = selected !== null ? circles[selected] : null;
+  const parentSet = sel?.parent ? new Set(sel.parent.triple) : null;
+  const swapIdx = sel?.parent ? sel.parent.swap : null;
+  const multiSet = multiSelected ? new Set(multiSelected.indices) : null;
+
+  // Pass 1: regular circles (skip highlights — drawn last on top)
+  for (const item of revealPlan) {
+    if (sel && (item.idx === selected || parentSet?.has(item.idx) || item.idx === swapIdx)) continue;
+    if (multiSet?.has(item.idx)) continue;
+    const alpha = Math.max(0, Math.min(1, (frame - item.frame) / FADE_FRAMES));
+    if (alpha <= 0) continue;
+    const c = circles[item.idx];
+    const r = Math.abs(1 / c.k) * sc;
+    if (r < 0.4) continue;
+    const [px, py] = toS(c.z[0], c.z[1]);
+    const t = c.depth / Math.max(maxGen, 1);
+    const [r8, g8, b8] = colormap(t);
+    ctx.strokeStyle = `rgba(${r8}, ${g8}, ${b8}, ${alpha * 0.92})`;
+    ctx.lineWidth = LINE_WIDTH;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Pass 2: multi-select pill highlights (white with cyan glow)
+  if (multiSet) {
+    ctx.shadowColor = '#4fc3f7';
+    ctx.shadowBlur = 10;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.8;
+    for (const idx of multiSelected.indices) {
+      const c = circles[idx];
+      const r = Math.abs(1 / c.k) * sc;
+      const [px, py] = toS(c.z[0], c.z[1]);
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  // Pass 3: single-select highlights (always on top, regardless of reveal state)
+  if (sel) {
+    const drawHL = (idx, color, width) => {
+      const c = circles[idx];
+      const r = Math.abs(1 / c.k) * sc;
+      const [px, py] = toS(c.z[0], c.z[1]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.stroke();
+    };
+    if (sel.parent) {
+      for (const idx of sel.parent.triple) drawHL(idx, PARENT_COLOR, 1.6);
+      drawHL(sel.parent.swap, SWAP_COLOR, 1.2);
+    }
+    drawHL(selected, SEL_COLOR, 2.6);
+  }
+}
+
+// ── Animation tick ────────────────────────────────────────────────────
+function tick() {
+  if (frame <= maxFrame) {
+    frame++;
+    draw();
+  }
+}
+
+// ── Build ─────────────────────────────────────────────────────────────
+function rebuild() {
+  const k1 = parseFloat(document.getElementById('sk1').value);
+  const k2 = parseFloat(document.getElementById('sk2').value);
+  const k3 = parseFloat(document.getElementById('sk3').value);
+  const depth = parseInt(document.getElementById('sdepth').value);
+  const speed = parseInt(document.getElementById('sspeed').value);
+
+  selected = null;
+  multiSelected = null;
+
+  let initial;
+  try {
+    initial = initialConfiguration(k1, k2, k3);
+  } catch (e) {
+    return;
+  }
+  if (!isFinite(initial[0].k) || initial[0].k >= 0) {
+    document.getElementById('circleCount').textContent = 'no wrapping circle for these curvatures';
+    return;
+  }
+
+  circles = buildGasket(initial, depth);
+  R = Math.abs(1 / initial[0].k);
+  maxGen = circles.reduce((m, c) => Math.max(m, c.depth), 0);
+  revealPlan = planReveal(circles, speed);
+  maxFrame = revealPlan.length
+    ? revealPlan[revealPlan.length - 1].frame + FADE_FRAMES
+    : 1;
+  frame = 0;
+
+  document.getElementById('circleCount').textContent =
+    `${circles.length.toLocaleString()} circles · ${maxGen + 1} generations`;
+
+  detectIntegerMode(k1, k2, k3);
+  updateLiveMath();
+  updateBuildMath();
+  fitView();
+}
+
+// ── Integer-mode auto-detection ───────────────────────────────────────
+function detectIntegerMode(k1, k2, k3) {
+  intMode = { active: false, integers: [] };
+  if (!Number.isInteger(k1) || !Number.isInteger(k2) || !Number.isInteger(k3)) return;
+  const set = new Set();
+  for (const c of circles) {
+    const ck = c.k;
+    const rounded = Math.round(ck);
+    if (Math.abs(ck - rounded) > INT_TOL || Math.abs(rounded) > INT_LIMIT) return;
+    set.add(rounded);
+  }
+  intMode.active = true;
+  intMode.integers = [...set].sort((a, b) => a - b);
+}
+
+// ── Math drawer updates ───────────────────────────────────────────────
+function updateLiveMath() {
+  const k1 = parseFloat(document.getElementById('sk1').value);
+  const k2 = parseFloat(document.getElementById('sk2').value);
+  const k3 = parseFloat(document.getElementById('sk3').value);
+  const sumK = k1 + k2 + k3;
+  const disc = Math.max(k1 * k2 + k2 * k3 + k3 * k1, 0);
+  const k4 = sumK - 2 * Math.sqrt(disc);
+  const lhs = (k1 + k2 + k3 + k4) ** 2;
+  const rhs = 2 * (k1 * k1 + k2 * k2 + k3 * k3 + k4 * k4);
+  document.getElementById('lhs').textContent = lhs.toFixed(3);
+  document.getElementById('rhs').textContent = rhs.toFixed(3);
+
+  const fmt = v => Number.isInteger(v) ? v.toFixed(0) : v.toFixed(2);
+  document.getElementById('kvec').innerHTML =
+    `<span class="label">k =</span>(<span class="k1">${fmt(k1)}</span>, <span class="k2">${fmt(k2)}</span>, <span class="k3">${fmt(k3)}</span>, <span class="k4">${fmt(k4)}</span>)`;
+}
+
+function updateBuildMath() {
+  const intStatus = document.getElementById('intStatus');
+  const intList = document.getElementById('intList');
+  intList.innerHTML = '';
+
+  const k1 = parseFloat(document.getElementById('sk1').value);
+  const k2 = parseFloat(document.getElementById('sk2').value);
+  const k3 = parseFloat(document.getElementById('sk3').value);
+  const allIntInputs = Number.isInteger(k1) && Number.isInteger(k2) && Number.isInteger(k3);
+
+  if (intMode.active) {
+    intStatus.classList.add('active');
+    intStatus.textContent = `Integer gasket detected — ${intMode.integers.length} distinct curvatures (click any to highlight matching circles):`;
+    for (const k of intMode.integers) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = k;
+      pill.dataset.k = String(k);
+      if (multiSelected && multiSelected.value === k) pill.classList.add('active');
+      pill.addEventListener('click', () => togglePillSelect(k));
+      intList.appendChild(pill);
+    }
+  } else if (allIntInputs) {
+    intStatus.classList.remove('active');
+    intStatus.textContent = 'Inputs are integer but the gasket has irrational curvatures. Try (2, 2, 3).';
+  } else {
+    intStatus.classList.remove('active');
+    intStatus.textContent = 'Set k₁, k₂, k₃ to integers to look for an integer gasket.';
+  }
+
+  updateSelectedCircle();
+}
+
+function fmtK(k) {
+  if (Math.abs(k - Math.round(k)) < INT_TOL) return Math.round(k).toString();
+  return k.toFixed(3);
+}
+
+function updateSelectedCircle() {
+  const selInfo = document.getElementById('selInfo');
+  if (selected === null) {
+    selInfo.innerHTML = `<div class="empty">Click any circle on the canvas to see how its curvature is computed from its parent triple.</div>`;
+    return;
+  }
+  const c = circles[selected];
+  if (!c.parent) {
+    selInfo.innerHTML = `<div class="swapEq">Seed circle (depth 0) — k = <span class="num">${fmtK(c.k)}</span></div><div class="swapEq meta">No parent triple — this is one of the four starting circles.</div>`;
+    return;
+  }
+  const { triple, swap } = c.parent;
+  const a = circles[triple[0]], b = circles[triple[1]], cc = circles[triple[2]];
+  const swapped = circles[swap];
+  const sumK = a.k + b.k + cc.k;
+  const computed = 2 * sumK - swapped.k;
+  selInfo.innerHTML = `
+    <div class="swapEq">k<sub>new</sub> = 2 (k<sub>a</sub> + k<sub>b</sub> + k<sub>c</sub>) − k<sub>old</sub></div>
+    <div class="swapEq">= 2 (<span class="num">${fmtK(a.k)}</span> + <span class="num">${fmtK(b.k)}</span> + <span class="num">${fmtK(cc.k)}</span>) − <span class="num">${fmtK(swapped.k)}</span></div>
+    <div class="swapEq">= <span class="num">${fmtK(computed)}</span></div>
+    <div class="swapEq meta" style="margin-top:6px">depth ${c.depth} · radius ${(1 / c.k).toExponential(3)}</div>
+    <div class="swapEq meta" style="margin-top:2px">parent triple <span style="color:${PARENT_COLOR}">▬</span>  ·  old fourth <span style="color:${SWAP_COLOR}">▬</span>  ·  this circle <span style="color:${SEL_COLOR}">▬</span></div>
+  `;
+}
+
+// ── Mouse: zoom (wheel), pan (drag), click-to-select ──────────────────
+cvs.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = cvs.getBoundingClientRect();
+  const sxp = e.clientX - r.left, syp = e.clientY - r.top;
+  const [wx, wy] = fromS(sxp, syp);
+  // Continuous, deltaY-proportional zoom; ~16% per mouse-wheel notch
+  const factor = Math.pow(1.0015, e.deltaY);
+  xMin = wx - (wx - xMin) * factor;
+  xMax = wx + (xMax - wx) * factor;
+  yMin = wy - (wy - yMin) * factor;
+  yMax = wy + (yMax - wy) * factor;
+  draw();
+}, { passive: false });
+
+let dragStart = null;
+let dragMoved = false;
+const DRAG_THRESHOLD = 3;
+
+cvs.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  dragStart = {
+    sx: e.clientX, sy: e.clientY,
+    xMin, xMax, yMin, yMax,
+  };
+  dragMoved = false;
+  cvs.classList.add('grabbing');
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dragStart) return;
+  const dxPx = e.clientX - dragStart.sx;
+  const dyPx = e.clientY - dragStart.sy;
+  if (Math.abs(dxPx) > DRAG_THRESHOLD || Math.abs(dyPx) > DRAG_THRESHOLD) dragMoved = true;
+  if (!dragMoved) return;
+  const w = cvs.clientWidth, h = cvs.clientHeight;
+  const dxw = (dragStart.xMax - dragStart.xMin) * dxPx / w;
+  const dyw = (dragStart.yMax - dragStart.yMin) * dyPx / h;
+  xMin = dragStart.xMin - dxw;
+  xMax = dragStart.xMax - dxw;
+  yMin = dragStart.yMin + dyw;  // canvas y-axis flipped
+  yMax = dragStart.yMax + dyw;
+  draw();
+});
+
+window.addEventListener('mouseup', e => {
+  if (!dragStart) return;
+  cvs.classList.remove('grabbing');
+  if (!dragMoved && e.target === cvs) {
+    const r = cvs.getBoundingClientRect();
+    const sxp = e.clientX - r.left, syp = e.clientY - r.top;
+    handleCanvasClick(sxp, syp);
+  }
+  dragStart = null;
+  dragMoved = false;
+});
+
+function handleCanvasClick(sxp, syp) {
+  const [wx, wy] = fromS(sxp, syp);
+  let best = -1, bestR = Infinity;
+  for (const item of revealPlan) {
+    if (frame - item.frame < FADE_FRAMES * 0.5) continue;
+    const c = circles[item.idx];
+    const dx = wx - c.z[0], dy = wy - c.z[1];
+    const dist = Math.hypot(dx, dy);
+    const radius = Math.abs(1 / c.k);
+    if (dist < radius && radius < bestR) {
+      best = item.idx;
+      bestR = radius;
+    }
+  }
+  if (best >= 0) {
+    selected = best;
+    clearMultiSelect();
+    updateSelectedCircle();
+    openDrawer({ pan: false });
+    draw();
+  } else if (selected !== null || multiSelected !== null) {
+    selected = null;
+    clearMultiSelect();
+    updateSelectedCircle();
+    draw();
+  }
+}
+
+function clearMultiSelect() {
+  if (!multiSelected) return;
+  multiSelected = null;
+  document.querySelectorAll('#intList .pill').forEach(p => p.classList.remove('active'));
+}
+
+function togglePillSelect(k) {
+  if (multiSelected && multiSelected.value === k) {
+    clearMultiSelect();
+  } else {
+    const indices = [];
+    for (let i = 0; i < circles.length; i++) {
+      if (Math.abs(circles[i].k - k) < INT_TOL) indices.push(i);
+    }
+    multiSelected = { value: k, indices };
+    selected = null;
+    updateSelectedCircle();
+    document.querySelectorAll('#intList .pill').forEach(p => {
+      p.classList.toggle('active', parseInt(p.dataset.k) === k);
+    });
+  }
+  draw();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (selected !== null || multiSelected !== null) {
+      selected = null;
+      clearMultiSelect();
+      updateSelectedCircle();
+      draw();
+    } else if (drawerOpen) {
+      closeDrawer();
+    }
+  }
+});
+
+// ── Slider + value-input wiring ───────────────────────────────────────
+function bindSlider(slId, vId, opts = {}) {
+  const sl = document.getElementById(slId);
+  const v  = document.getElementById(vId);
+  const fmtVal = x => opts.int ? String(x | 0) : parseFloat(x).toFixed(1);
+
+  sl.addEventListener('input', () => {
+    v.value = fmtVal(sl.value);
+    if (opts.live) opts.live();
+  });
+  v.addEventListener('change', () => {
+    let x = parseFloat(v.value);
+    if (isNaN(x)) { v.value = fmtVal(sl.value); return; }
+    x = Math.max(parseFloat(sl.min), Math.min(parseFloat(sl.max), x));
+    if (opts.int) x = Math.round(x);
+    sl.value = x;
+    v.value = fmtVal(x);
+    if (opts.live) opts.live();
+  });
+  v.addEventListener('keydown', e => {
+    if (e.key === 'Enter') v.blur();
+  });
+  v.addEventListener('focus', () => v.select());
+}
+
+bindSlider('sk1',    'vk1',    { live: updateLiveMath });
+bindSlider('sk2',    'vk2',    { live: updateLiveMath });
+bindSlider('sk3',    'vk3',    { live: updateLiveMath });
+bindSlider('sdepth', 'vdepth', { int: true });
+bindSlider('sspeed', 'vspeed', { int: true });
+
+// ── Buttons ───────────────────────────────────────────────────────────
+document.getElementById('bRebuild').addEventListener('click', rebuild);
+document.getElementById('bReset').addEventListener('click', () => {
+  setSliders(3.0, 3.0, 3.0, 14, 6);
+  rebuild();
+});
+document.getElementById('bFit').addEventListener('click', fitView);
+
+document.querySelectorAll('button.preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const [a, b, c] = btn.dataset.k.split(',').map(Number);
+    setSliders(a, b, c);
+    rebuild();
+  });
+});
+
+function setSliders(k1, k2, k3, depth, speed) {
+  document.getElementById('sk1').value = k1;
+  document.getElementById('vk1').value = k1.toFixed(1);
+  document.getElementById('sk2').value = k2;
+  document.getElementById('vk2').value = k2.toFixed(1);
+  document.getElementById('sk3').value = k3;
+  document.getElementById('vk3').value = k3.toFixed(1);
+  if (depth !== undefined) {
+    document.getElementById('sdepth').value = depth;
+    document.getElementById('vdepth').value = String(depth);
+  }
+  if (speed !== undefined) {
+    document.getElementById('sspeed').value = speed;
+    document.getElementById('vspeed').value = String(speed);
+  }
+  updateLiveMath();
+}
+
+// ── Drawer toggle ─────────────────────────────────────────────────────
+function panForDrawer(open) {
+  // Shift the data window so the visible-area (canvas - drawer) center stays at the
+  // same data point. Always uses *current* ppu so zoom level is preserved.
+  const w = cvs.clientWidth;
+  if (xMax - xMin <= 0 || w <= 0) return;
+  const ppu = w / (xMax - xMin);
+  const drawerW = Math.min(360, w);
+  const s = drawerW / 2 / ppu;
+  const targetXMin = xMin + (open ? s : -s);
+  const targetXMax = xMax + (open ? s : -s);
+  animateXRange(targetXMin, targetXMax, 280);
+}
+
+function animateXRange(targetXMin, targetXMax, durationMs) {
+  if (panAnim) cancelAnimationFrame(panAnim);
+  const startTime = performance.now();
+  const startXMin = xMin, startXMax = xMax;
+  const easeInOutCubic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / durationMs);
+    const e = easeInOutCubic(t);
+    xMin = startXMin + (targetXMin - startXMin) * e;
+    xMax = startXMax + (targetXMax - startXMax) * e;
+    draw();
+    if (t < 1) panAnim = requestAnimationFrame(step);
+    else panAnim = null;
+  }
+  panAnim = requestAnimationFrame(step);
+}
+
+function openDrawer({ pan = false } = {}) {
+  if (drawerOpen) return;
+  drawerOpen = true;
+  document.body.classList.add('drawer-open');
+  if (pan && !viewShifted) {
+    panForDrawer(true);
+    viewShifted = true;
+  }
+  draw();
+}
+
+function closeDrawer() {
+  if (!drawerOpen) return;
+  drawerOpen = false;
+  document.body.classList.remove('drawer-open');
+  if (viewShifted) {
+    panForDrawer(false);
+    viewShifted = false;
+  }
+  draw();
+}
+
+document.getElementById('drawerTab').addEventListener('click', () => openDrawer({ pan: true }));
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+
+// ── Tooltips: smart positioning, escape drawer's clip + transform ─────
+function setupTooltips() {
+  document.querySelectorAll('.term').forEach(term => {
+    const tip = term.querySelector('.tip');
+    if (!tip) return;
+    // Move tip to body so the drawer's transform doesn't capture position:fixed,
+    // and the drawer body's overflow:auto can't clip it.
+    document.body.appendChild(tip);
+
+    function show() {
+      tip.style.display = 'block';
+      const tipRect = tip.getBoundingClientRect();
+      const termRect = term.getBoundingClientRect();
+      const margin = 8;
+      // Prefer above the term; flip below if it would clip the top of viewport
+      let top = termRect.top - tipRect.height - 8;
+      if (top < margin) top = termRect.bottom + 8;
+      // Right-align the tip with the term's right edge
+      let left = termRect.right - tipRect.width;
+      if (left < margin) left = margin;
+      if (left + tipRect.width > window.innerWidth - margin) {
+        left = window.innerWidth - tipRect.width - margin;
+      }
+      tip.style.top = top + 'px';
+      tip.style.left = left + 'px';
+    }
+    function hide() { tip.style.display = 'none'; }
+
+    term.addEventListener('mouseenter', show);
+    term.addEventListener('mouseleave', hide);
+    term.addEventListener('focus', show);
+    term.addEventListener('blur', hide);
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+window.addEventListener('resize', resize);
+resize();
+rebuild();
+setupTooltips();
+setInterval(tick, FRAME_INTERVAL_MS);
+</script>
+</body>
+</html>
