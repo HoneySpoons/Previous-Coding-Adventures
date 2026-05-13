@@ -22,8 +22,7 @@ body {
   overflow: hidden;
   min-height: 0;
 }
-canvas#cvs { display: block; cursor: grab; }
-canvas#cvs.grabbing { cursor: grabbing; }
+canvas#cvs { display: block; cursor: default; }
 
 /* Drawer toggle tab — visible when drawer is closed */
 #drawerTab {
@@ -387,6 +386,7 @@ const FRAME_INTERVAL_MS = 25;
 const LINE_WIDTH = 0.9;
 const INT_TOL = 1e-6;
 const INT_LIMIT = 100000;
+const MIN_HOVER_PX = 4;
 
 // Spectrum drawn from the pendulum palette: cyan → periwinkle → purple → pink → amber
 const STOPS = [
@@ -541,6 +541,9 @@ let multiSelected = null;  // { value: k, indices: [...] } — set when an integ
 let drawerOpen = false;
 let viewShifted = false;
 let panAnim    = null;
+let hoverIdx      = null;
+let revealPlanMap = new Map();
+let rebuildTimer  = null;
 
 const cvs = document.getElementById('cvs');
 const ctx = cvs.getContext('2d');
@@ -604,10 +607,18 @@ function draw() {
   const swapIdx = sel?.parent ? sel.parent.swap : null;
   const multiSet = multiSelected ? new Set(multiSelected.indices) : null;
 
-  // Pass 1: regular circles (skip highlights — drawn last on top)
+  // Hover glow applies only when circle isn't already highlighted by selection/pill
+  const shouldGlow = hoverIdx !== null &&
+    hoverIdx !== selected &&
+    !parentSet?.has(hoverIdx) &&
+    hoverIdx !== swapIdx &&
+    !multiSet?.has(hoverIdx);
+
+  // Pass 1: regular circles (skip highlights and hover — drawn separately)
   for (const item of revealPlan) {
     if (sel && (item.idx === selected || parentSet?.has(item.idx) || item.idx === swapIdx)) continue;
     if (multiSet?.has(item.idx)) continue;
+    if (shouldGlow && item.idx === hoverIdx) continue;
     const alpha = Math.max(0, Math.min(1, (frame - item.frame) / FADE_FRAMES));
     if (alpha <= 0) continue;
     const c = circles[item.idx];
@@ -621,6 +632,31 @@ function draw() {
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  // Pass 1.5: hover glow — warm amber halo, visually distinct from pill highlight (cyan)
+  if (shouldGlow) {
+    const hoverItem = revealPlanMap.get(hoverIdx);
+    if (hoverItem) {
+      const alpha = Math.max(0, Math.min(1, (frame - hoverItem.frame) / FADE_FRAMES));
+      if (alpha > 0) {
+        const c = circles[hoverIdx];
+        const r = Math.abs(1 / c.k) * sc;
+        if (r >= MIN_HOVER_PX) {
+          const [px, py] = toS(c.z[0], c.z[1]);
+          const t = c.depth / Math.max(maxGen, 1);
+          const [r8, g8, b8] = colormap(t);
+          ctx.shadowColor = 'rgba(255, 200, 80, 0.6)';
+          ctx.shadowBlur = 10;
+          ctx.strokeStyle = `rgba(${r8}, ${g8}, ${b8}, ${alpha})`;
+          ctx.lineWidth = LINE_WIDTH;
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+      }
+    }
   }
 
   // Pass 2: multi-select pill highlights (white with cyan glow)
@@ -678,6 +714,7 @@ function rebuild() {
 
   selected = null;
   multiSelected = null;
+  hoverIdx = null;
 
   let initial;
   try {
@@ -694,6 +731,7 @@ function rebuild() {
   R = Math.abs(1 / initial[0].k);
   maxGen = circles.reduce((m, c) => Math.max(m, c.depth), 0);
   revealPlan = planReveal(circles, speed);
+  revealPlanMap = new Map(revealPlan.map(item => [item.idx, item]));
   maxFrame = revealPlan.length
     ? revealPlan[revealPlan.length - 1].frame + FADE_FRAMES
     : 1;
@@ -706,6 +744,44 @@ function rebuild() {
   updateLiveMath();
   updateBuildMath();
   fitView();
+}
+
+// ── Silent rebuild (for live slider updates — no reveal animation) ────
+function rebuildSilent() {
+  const k1 = parseFloat(document.getElementById('sk1').value);
+  const k2 = parseFloat(document.getElementById('sk2').value);
+  const k3 = parseFloat(document.getElementById('sk3').value);
+  const depth = parseInt(document.getElementById('sdepth').value);
+
+  selected = null; multiSelected = null; hoverIdx = null;
+
+  let initial;
+  try { initial = initialConfiguration(k1, k2, k3); } catch (e) { return; }
+  if (!isFinite(initial[0].k) || initial[0].k >= 0) {
+    document.getElementById('circleCount').textContent = 'no wrapping circle for these curvatures';
+    return;
+  }
+
+  circles = buildGasket(initial, depth);
+  R = Math.abs(1 / initial[0].k);
+  maxGen = circles.reduce((m, c) => Math.max(m, c.depth), 0);
+  revealPlan = circles.map((_, i) => ({ idx: i, frame: 0 }));
+  revealPlanMap = new Map(revealPlan.map(item => [item.idx, item]));
+  frame = FADE_FRAMES + 1;
+  maxFrame = FADE_FRAMES + 1;
+
+  document.getElementById('circleCount').textContent =
+    `${circles.length.toLocaleString()} circles · ${maxGen + 1} generations`;
+
+  detectIntegerMode(k1, k2, k3);
+  updateLiveMath();
+  updateBuildMath();
+  fitView();
+}
+
+function debouncedRebuildSilent() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(rebuildSilent, 80);
 }
 
 // ── Integer-mode auto-detection ───────────────────────────────────────
@@ -830,36 +906,77 @@ cvs.addEventListener('mousedown', e => {
     xMin, xMax, yMin, yMax,
   };
   dragMoved = false;
-  cvs.classList.add('grabbing');
+  cvs.style.cursor = 'grabbing';
 });
 
 window.addEventListener('mousemove', e => {
-  if (!dragStart) return;
-  const dxPx = e.clientX - dragStart.sx;
-  const dyPx = e.clientY - dragStart.sy;
-  if (Math.abs(dxPx) > DRAG_THRESHOLD || Math.abs(dyPx) > DRAG_THRESHOLD) dragMoved = true;
-  if (!dragMoved) return;
-  const w = cvs.clientWidth, h = cvs.clientHeight;
-  const dxw = (dragStart.xMax - dragStart.xMin) * dxPx / w;
-  const dyw = (dragStart.yMax - dragStart.yMin) * dyPx / h;
-  xMin = dragStart.xMin - dxw;
-  xMax = dragStart.xMax - dxw;
-  yMin = dragStart.yMin + dyw;  // canvas y-axis flipped
-  yMax = dragStart.yMax + dyw;
-  draw();
+  if (dragStart) {
+    const dxPx = e.clientX - dragStart.sx;
+    const dyPx = e.clientY - dragStart.sy;
+    if (Math.abs(dxPx) > DRAG_THRESHOLD || Math.abs(dyPx) > DRAG_THRESHOLD) dragMoved = true;
+    if (!dragMoved) return;
+    const w = cvs.clientWidth, h = cvs.clientHeight;
+    const dxw = (dragStart.xMax - dragStart.xMin) * dxPx / w;
+    const dyw = (dragStart.yMax - dragStart.yMin) * dyPx / h;
+    xMin = dragStart.xMin - dxw;
+    xMax = dragStart.xMax - dxw;
+    yMin = dragStart.yMin + dyw;  // canvas y-axis flipped
+    yMax = dragStart.yMax + dyw;
+    draw();
+    return;
+  }
+  if (e.target === cvs) {
+    const r = cvs.getBoundingClientRect();
+    handleHover(e.clientX - r.left, e.clientY - r.top);
+  }
 });
 
 window.addEventListener('mouseup', e => {
   if (!dragStart) return;
-  cvs.classList.remove('grabbing');
+  const r = cvs.getBoundingClientRect();
+  const sxp = e.clientX - r.left, syp = e.clientY - r.top;
   if (!dragMoved && e.target === cvs) {
-    const r = cvs.getBoundingClientRect();
-    const sxp = e.clientX - r.left, syp = e.clientY - r.top;
     handleCanvasClick(sxp, syp);
   }
   dragStart = null;
   dragMoved = false;
+  cvs.style.cursor = 'default';
+  if (e.target === cvs) handleHover(sxp, syp);
 });
+
+cvs.addEventListener('mouseleave', () => {
+  if (hoverIdx !== null) {
+    hoverIdx = null;
+    draw();
+  }
+});
+
+function findCircleAt(sxp, syp) {
+  const [wx, wy] = fromS(sxp, syp);
+  const sc = pxPerUnit();
+  let best = -1, bestR = Infinity;
+  for (const item of revealPlan) {
+    if (frame - item.frame < FADE_FRAMES * 0.5) continue;
+    const c = circles[item.idx];
+    const radius = Math.abs(1 / c.k);
+    if (radius * sc < MIN_HOVER_PX) continue;
+    const dx = wx - c.z[0], dy = wy - c.z[1];
+    if (Math.hypot(dx, dy) < radius && radius < bestR) {
+      best = item.idx;
+      bestR = radius;
+    }
+  }
+  return best;
+}
+
+function handleHover(sxp, syp) {
+  const idx = findCircleAt(sxp, syp);
+  const newHover = idx >= 0 ? idx : null;
+  if (newHover !== hoverIdx) {
+    hoverIdx = newHover;
+    draw();
+  }
+}
 
 function handleCanvasClick(sxp, syp) {
   const [wx, wy] = fromS(sxp, syp);
@@ -951,10 +1068,10 @@ function bindSlider(slId, vId, opts = {}) {
   v.addEventListener('focus', () => v.select());
 }
 
-bindSlider('sk1',    'vk1',    { live: updateLiveMath });
-bindSlider('sk2',    'vk2',    { live: updateLiveMath });
-bindSlider('sk3',    'vk3',    { live: updateLiveMath });
-bindSlider('sdepth', 'vdepth', { int: true });
+bindSlider('sk1',    'vk1',    { live: () => { updateLiveMath(); debouncedRebuildSilent(); } });
+bindSlider('sk2',    'vk2',    { live: () => { updateLiveMath(); debouncedRebuildSilent(); } });
+bindSlider('sk3',    'vk3',    { live: () => { updateLiveMath(); debouncedRebuildSilent(); } });
+bindSlider('sdepth', 'vdepth', { int: true, live: debouncedRebuildSilent });
 bindSlider('sspeed', 'vspeed', { int: true });
 
 // ── Buttons ───────────────────────────────────────────────────────────

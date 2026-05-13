@@ -137,6 +137,17 @@ let trueVal  = 0;
 let convData = { left:[], midpoint:[], right:[] };
 let dirty    = true;   // needs precompute
 
+let dotPixel  = { x: 0, y: 0 };
+let botPAD    = null;
+let botPw     = 0;
+let dotDrag   = false;
+const DOT_HIT = 10;  // px — slightly larger than the visual dot radius
+
+function botNFromX(xp) {
+  if (!botPAD || botPw <= 0) return n;
+  return Math.max(1, Math.min(N_MAX, Math.round(1 + (xp - botPAD.L) / botPw * (N_MAX - 1))));
+}
+
 // ── Functions ──────────────────────────────────────────────────────────
 const FUNCS = [
   {
@@ -388,6 +399,7 @@ function drawBot() {
   const PAD = { L: 54, R: 18, T: 16, B: 28 };
   const pw = w - PAD.L - PAD.R;
   const ph = h - PAD.T - PAD.B;
+  botPAD = PAD; botPw = pw;
 
   // y range in log10 space
   const allVals = [...convData.left, ...convData.midpoint, ...convData.right];
@@ -449,6 +461,7 @@ function drawBot() {
   const curErr = convData[rule][n - 1];
   const mxp = tx(n);
   const myp = ty(curErr);
+  dotPixel = { x: mxp, y: myp };
   c.strokeStyle = ERR_C; c.lineWidth = 1; c.globalAlpha = 0.6; c.setLineDash([3, 4]);
   c.beginPath(); c.moveTo(mxp, PAD.T); c.lineTo(mxp, PAD.T + ph); c.stroke();
   c.setLineDash([]); c.globalAlpha = 1;
@@ -529,6 +542,48 @@ document.getElementById('nsl').addEventListener('input', function() {
   n = parseInt(this.value);
   document.getElementById('nval').textContent = n;
   draw();
+});
+
+// ── Convergence dot drag-scrub ─────────────────────────────────────────
+
+bcvs.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const r = bcvs.getBoundingClientRect();
+  const xp = e.clientX - r.left, yp = e.clientY - r.top;
+  if (Math.hypot(xp - dotPixel.x, yp - dotPixel.y) <= DOT_HIT) {
+    dotDrag = true;
+    bcvs.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dotDrag) return;
+  const r = bcvs.getBoundingClientRect();
+  const newN = botNFromX(e.clientX - r.left);
+  if (newN !== n) {
+    n = newN;
+    document.getElementById('nsl').value = n;
+    document.getElementById('nval').textContent = n;
+    draw();
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (!dotDrag) return;
+  dotDrag = false;
+  bcvs.style.cursor = 'default';
+});
+
+bcvs.addEventListener('mousemove', e => {
+  if (dotDrag) return;
+  const r = bcvs.getBoundingClientRect();
+  const xp = e.clientX - r.left, yp = e.clientY - r.top;
+  bcvs.style.cursor = Math.hypot(xp - dotPixel.x, yp - dotPixel.y) <= DOT_HIT ? 'grab' : 'default';
+});
+
+bcvs.addEventListener('mouseleave', () => {
+  if (!dotDrag) bcvs.style.cursor = 'default';
 });
 
 // ── Init ───────────────────────────────────────────────────────────────
